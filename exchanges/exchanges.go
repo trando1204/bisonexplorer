@@ -31,12 +31,15 @@ const (
 	Coinbase     = "coinbase"
 	Coindesk     = "coindesk"
 	Binance      = "binance"
+	BTCBinance   = "btc_binance"
 	DragonEx     = "dragonex"
 	Huobi        = "huobi"
 	Poloniex     = "poloniex"
 	DexDotDecred = "dcrdex"
 	KuCoin       = "kucoin"
 	Gemini       = "gemini"
+	USDTPair     = "usdt"
+	BTCPair      = "btc"
 )
 
 // A few candlestick bin sizes.
@@ -108,6 +111,18 @@ var (
 			hourKey:  "%s/api/v3/klines?symbol=DCRUSDT&interval=1h",
 			dayKey:   "%s/api/v3/klines?symbol=DCRUSDT&interval=1d",
 			monthKey: "%s/api/v3/klines?symbol=DCRUSDT&interval=1M",
+		},
+	}
+
+	BinanceBTCURLs = URLs{
+		Price: "%s/api/v3/ticker/24hr?symbol=DCRBTC",
+		// Binance returns a maximum of 5000 depth chart points. This seems like it
+		// is the entire order book at least sometimes.
+		Depth: "%s/api/v3/depth?symbol=DCRBTC&limit=5000",
+		Candlesticks: map[candlestickKey]string{
+			hourKey:  "%s/api/v3/klines?symbol=DCRBTC&interval=1h",
+			dayKey:   "%s/api/v3/klines?symbol=DCRBTC&interval=1d",
+			monthKey: "%s/api/v3/klines?symbol=DCRBTC&interval=1M",
 		},
 	}
 
@@ -223,11 +238,12 @@ var BtcIndices = map[string]func(*http.Client, *BotChannels, string) (Exchange, 
 
 // DcrExchanges maps tokens to constructors for DCR-BTC exchanges.
 var DcrExchanges = map[string]func(*http.Client, *BotChannels, string) (Exchange, error){
-	Binance:  NewBinance,
-	DragonEx: NewDragonEx,
-	Huobi:    NewHuobi,
-	Poloniex: NewPoloniex,
-	KuCoin:   NewKucoin,
+	Binance:    NewBinance,
+	BTCBinance: NewBTCBinance,
+	DragonEx:   NewDragonEx,
+	Huobi:      NewHuobi,
+	Poloniex:   NewPoloniex,
+	KuCoin:     NewKucoin,
 	DexDotDecred: NewDecredDEXConstructor(&DEXConfig{
 		Token:    DexDotDecred,
 		Host:     "dex.decred.org:7232",
@@ -265,7 +281,16 @@ func IsBtcIndex(token string) bool {
 
 // IsDcrExchange checks whether the given token is a known Decred-BTC exchange.
 func IsDcrExchange(token string, symbol string) bool {
-	if symbol != DCRSYMBOL {
+	if symbol != DCRUSDSYMBOL {
+		return false
+	}
+	_, ok := DcrExchanges[token]
+	return ok
+}
+
+// IsDcrExchange checks whether the given token is a known Decred-BTC exchange.
+func IsDcrBtcExchange(token string, symbol string) bool {
+	if symbol != DCRBTCSYMBOL {
 		return false
 	}
 	_, ok := DcrExchanges[token]
@@ -1124,7 +1149,35 @@ func NewBinance(client *http.Client, channels *BotChannels, binanceApiUrl string
 	}
 
 	commonExchange := newCommonExchange(Binance, client, reqs, channels)
-	commonExchange.Symbol = DCRSYMBOL
+	commonExchange.Symbol = DCRUSDSYMBOL
+	binance = &BinanceExchange{
+		CommonExchange: commonExchange,
+	}
+	return
+}
+
+// NewBTCBinance constructs a BinanceExchange for dcr/btc pair.
+func NewBTCBinance(client *http.Client, channels *BotChannels, binanceApiUrl string) (binance Exchange, err error) {
+	reqs := newRequests()
+	reqs.price, err = http.NewRequest(http.MethodGet, fmt.Sprintf(BinanceBTCURLs.Price, binanceApiUrl), nil)
+	if err != nil {
+		return
+	}
+
+	reqs.depth, err = http.NewRequest(http.MethodGet, fmt.Sprintf(BinanceBTCURLs.Depth, binanceApiUrl), nil)
+	if err != nil {
+		return
+	}
+
+	for dur, url := range BinanceBTCURLs.Candlesticks {
+		reqs.candlesticks[dur], err = http.NewRequest(http.MethodGet, fmt.Sprintf(url, binanceApiUrl), nil)
+		if err != nil {
+			return
+		}
+	}
+
+	commonExchange := newCommonExchange(BTCBinance, client, reqs, channels)
+	commonExchange.Symbol = DCRBTCSYMBOL
 	binance = &BinanceExchange{
 		CommonExchange: commonExchange,
 	}
@@ -1184,7 +1237,7 @@ func NewKucoin(client *http.Client, channels *BotChannels, _ string) (kucoin Exc
 	}
 
 	commonExchange := newCommonExchange(KuCoin, client, reqs, channels)
-	commonExchange.Symbol = DCRSYMBOL
+	commonExchange.Symbol = DCRUSDSYMBOL
 	kucoin = &KucoinExchange{
 		CommonExchange: commonExchange,
 	}
@@ -1632,6 +1685,7 @@ func (binance *BinanceExchange) Refresh() {
 		return
 	}
 	price, err := strconv.ParseFloat(priceResponse.LastPrice, 64)
+	fmt.Println("check symbol, token: ", binance.token, ", symbol: ", binance.Symbol, ", price: ", price)
 	if err != nil {
 		binance.fail(fmt.Sprintf("Failed to parse float from LastPrice=%s", priceResponse.LastPrice), err)
 		return
@@ -2278,7 +2332,7 @@ func NewHuobi(client *http.Client, channels *BotChannels, _ string) (huobi Excha
 		reqs.candlesticks[dur].Header.Add("Content-Type", "application/x-www-form-urlencoded")
 	}
 	commonExchange := newCommonExchange(Huobi, client, reqs, channels)
-	commonExchange.Symbol = DCRSYMBOL
+	commonExchange.Symbol = DCRUSDSYMBOL
 	return &HuobiExchange{
 		CommonExchange: commonExchange,
 		Ok:             "ok",
@@ -2323,7 +2377,7 @@ func GetSymbolFromChainType(chainType string) string {
 	case TYPELTC:
 		return LTCSYMBOL
 	default:
-		return DCRSYMBOL
+		return DCRUSDSYMBOL
 	}
 }
 

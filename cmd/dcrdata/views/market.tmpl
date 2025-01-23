@@ -101,16 +101,26 @@
         <div class="loader-v2 loading" data-market-target="chartLoader"></div>
             {{- /* CHART ONTROLS */ -}}
             <div class="d-flex flex-shrink-1 align-items-top justify-content-around market-common-card justify-content-lg-center flex-wrap mx-1 py-2 mx-lg-4 mb-2">
+                {{- /* PAIR SELECTION */ -}}
+                <div class="btn-set bg-white d-inline-flex flex-nowrap mx-2 mx-lg-4">
+                    <label>Pair</label>
+                    <select
+                        class="chart-box d-inline-flex"
+                        data-market-target="pairSelect"
+                        data-action="change->market#changePair"
+                    >
+                        <option value="usdt" selected>DCR/USDT</option>
+                        <option value="btc">DCR/BTC</option>
+                    </select>
+                </div>
                 {{- /* EXCHANGE SELECTION */ -}}
                 <div class="btn-set bg-white d-inline-flex flex-nowrap mx-2 mx-lg-4" data-market-target="exchanges"
                 data-action="click->market#changeExchange">
                     <label>Exchange</label>
                     <div class="btn-group" data-market-target="exchangeBtnArea">
                         {{range $index, $exchange := $botState.VolumeOrderedExchanges}}
-                        {{if ne $exchange.Token "dcrdex"}}
                         <button name="{{$exchange.Token}}" {{if $exchange.State.HasCandlesticks}} data-exchangeindex="{{$index}}" data-sticks="1" data-bins="{{$exchange.State.StickList}}"{{end}} {{if $exchange.State.HasDepth}} data-depth="1" {{end}}
                            class="tab-button home-chart-toggle-btn white c-txt-main {{if eq $index 0}}first-toggle-btn{{end}}">{{xcDisplayName $exchange.Token}}</button>
-                        {{end}}
                         {{end}}
                         <button name="aggregated" data-market-target="aggOption" data-depth="1"
                            class="tab-button home-chart-toggle-btn white c-txt-main last-toggle-btn">Aggregated</button>

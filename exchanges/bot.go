@@ -14,9 +14,10 @@ import (
 	"sync"
 	"time"
 
-	dcrrates "github.com/decred/dcrdata/exchanges/v3/ratesproto"
 	"google.golang.org/grpc"
 	credentials "google.golang.org/grpc/credentials"
+
+	dcrrates "github.com/decred/dcrdata/exchanges/v3/ratesproto"
 )
 
 const (
@@ -38,7 +39,8 @@ const (
 	TYPEBTC                = "btc"
 	LTCSYMBOL              = "LTCUSDT"
 	BTCSYMBOL              = "BTCUSDT"
-	DCRSYMBOL              = "DCRBTC"
+	DCRBTCSYMBOL           = "DCRBTC"
+	DCRUSDSYMBOL           = "DCRUSD"
 )
 
 // ExchangeBotConfig is the configuration options for ExchangeBot.
@@ -63,10 +65,12 @@ type ExchangeBotConfig struct {
 type ExchangeBot struct {
 	mtx             sync.RWMutex
 	DcrBtcExchanges map[string]Exchange
+	DcrUsdExchanges map[string]Exchange
 	LTCUSDExchanges map[string]Exchange
 	BTCUSDExchanges map[string]Exchange
 	IndexExchanges  map[string]Exchange
 	Exchanges       map[string]Exchange
+	DCRBTCExchanges map[string]Exchange
 	LTCExchanges    map[string]Exchange
 	BTCExchanges    map[string]Exchange
 	versionedCharts map[string]*versionedChart
@@ -110,17 +114,20 @@ type ExchangeBot struct {
 // ExchangeBotState is the current known state of all exchanges, in a certain
 // base currency, and a volume-averaged price and total volume in DCR.
 type ExchangeBotState struct {
-	BtcIndex  string                    `json:"btc_index"`
-	BtcPrice  float64                   `json:"btc_fiat_price"`
-	Price     float64                   `json:"price"`
-	Volume    float64                   `json:"volume"`
-	LTCPrice  float64                   `json:"ltc_price"`
-	LTCVolume float64                   `json:"ltc_volume"`
-	BTCPrice  float64                   `json:"btc_price"`
-	BTCVolume float64                   `json:"btc_volume"`
-	DcrBtc    map[string]*ExchangeState `json:"dcr_btc_exchanges"`
-	LtcUsd    map[string]*ExchangeState `json:"ltc_usd_exchanges"`
-	BtcUsd    map[string]*ExchangeState `json:"btc_usd_exchanges"`
+	BtcIndex     string                    `json:"btc_index"`
+	BtcPrice     float64                   `json:"btc_fiat_price"`
+	Price        float64                   `json:"price"`
+	DcrBtcPrice  float64                   `json:"dcr_btc_price"`
+	Volume       float64                   `json:"volume"`
+	DCRBTCVolume float64                   `json:"dcr_btc_volume"`
+	LTCPrice     float64                   `json:"ltc_price"`
+	LTCVolume    float64                   `json:"ltc_volume"`
+	BTCPrice     float64                   `json:"btc_price"`
+	BTCVolume    float64                   `json:"btc_volume"`
+	DcrBtc       map[string]*ExchangeState `json:"dcr_btc_exchanges"`
+	DcrUsd       map[string]*ExchangeState `json:"dcr_usd_exchanges"`
+	LtcUsd       map[string]*ExchangeState `json:"ltc_usd_exchanges"`
+	BtcUsd       map[string]*ExchangeState `json:"btc_usd_exchanges"`
 	// FiatIndices:
 	// TODO: We only really need the BaseState for the fiat indices.
 	FiatIndices map[string]*ExchangeState `json:"btc_indices"`
@@ -154,6 +161,7 @@ func copyStates(m map[string]*ExchangeState) map[string]*ExchangeState {
 // Creates a pointer to a copy of the ExchangeBotState.
 func (state ExchangeBotState) copy() *ExchangeBotState {
 	state.DcrBtc = copyStates(state.DcrBtc)
+	state.DcrUsd = copyStates(state.DcrUsd)
 	state.LtcUsd = copyStates(state.LtcUsd)
 	state.BtcUsd = copyStates(state.BtcUsd)
 	state.FiatIndices = copyStates(state.FiatIndices)
@@ -186,13 +194,20 @@ type TokenedExchange struct {
 func (state *ExchangeBotState) VolumeOrderedExchanges() []*TokenedExchange {
 	xcList := make([]*TokenedExchange, 0, len(state.DcrBtc))
 	for token, state := range state.DcrBtc {
-		if token != "dcrdex" {
-			state.Sticks = state.StickList()
-			xcList = append(xcList, &TokenedExchange{
-				Token: token,
-				State: state,
-			})
-		}
+		fmt.Println("token dcrbtc: ", token)
+		state.Sticks = state.StickList()
+		xcList = append(xcList, &TokenedExchange{
+			Token: token,
+			State: state,
+		})
+	}
+	for token, state := range state.DcrUsd {
+		fmt.Println("token dcrusd: ", token)
+		state.Sticks = state.StickList()
+		xcList = append(xcList, &TokenedExchange{
+			Token: token,
+			State: state,
+		})
 	}
 	sort.Slice(xcList, func(i, j int) bool {
 		if xcList[i].Token == "binance" {
@@ -375,10 +390,12 @@ func NewExchangeBot(config *ExchangeBotConfig) (*ExchangeBot, error) {
 
 	bot := &ExchangeBot{
 		DcrBtcExchanges: make(map[string]Exchange),
+		DcrUsdExchanges: make(map[string]Exchange),
 		LTCUSDExchanges: make(map[string]Exchange),
 		BTCUSDExchanges: make(map[string]Exchange),
 		IndexExchanges:  make(map[string]Exchange),
 		Exchanges:       make(map[string]Exchange),
+		DCRBTCExchanges: make(map[string]Exchange),
 		LTCExchanges:    make(map[string]Exchange),
 		BTCExchanges:    make(map[string]Exchange),
 		versionedCharts: make(map[string]*versionedChart),
@@ -394,6 +411,7 @@ func NewExchangeBot(config *ExchangeBotConfig) (*ExchangeBot, error) {
 			LTCVolume:   0,
 			BTCVolume:   0,
 			DcrBtc:      make(map[string]*ExchangeState),
+			DcrUsd:      make(map[string]*ExchangeState),
 			LtcUsd:      make(map[string]*ExchangeState),
 			BtcUsd:      make(map[string]*ExchangeState),
 			FiatIndices: make(map[string]*ExchangeState),
@@ -502,6 +520,10 @@ func NewExchangeBot(config *ExchangeBotConfig) (*ExchangeBot, error) {
 		buildExchange(token, constructor, bot.DcrBtcExchanges, config.BinanceAPIURL)
 	}
 
+	for token, constructor := range DcrExchanges {
+		buildExchange(token, constructor, bot.DcrUsdExchanges, config.BinanceAPIURL)
+	}
+
 	for token, constructor := range LTCExchanges {
 		buildMutilchainExchange(token, constructor, bot.LTCUSDExchanges, TYPELTC, config.BinanceAPIURL)
 	}
@@ -512,6 +534,10 @@ func NewExchangeBot(config *ExchangeBotConfig) (*ExchangeBot, error) {
 
 	if len(bot.DcrBtcExchanges) == 0 {
 		return nil, fmt.Errorf("no DCR-BTC exchanges were initialized")
+	}
+
+	if len(bot.DcrUsdExchanges) == 0 {
+		return nil, fmt.Errorf("no DCR-USD exchanges were initialized")
 	}
 
 	if len(bot.BTCUSDExchanges) == 0 {
@@ -592,6 +618,10 @@ func (bot *ExchangeBot) Start(ctx context.Context, wg *sync.WaitGroup) {
 						state := exchangeStateFromProto(update)
 						bot.BTCExchanges[update.Token].Update(state)
 					}
+					if IsDcrBtcExchange(update.Token, update.Symbol) {
+						state := exchangeStateFromProto(update)
+						bot.DCRBTCExchanges[update.Token].Update(state)
+					}
 				}
 			}()
 		}
@@ -601,6 +631,7 @@ func (bot *ExchangeBot) Start(ctx context.Context, wg *sync.WaitGroup) {
 		// de-sync the updates.
 		timeBetween := bot.DataExpiry / time.Duration(len(bot.Exchanges))
 		idx := 0
+		dcrbtcidx := 0
 		ltcIdx := 0
 		btcIdx := 0
 		for _, xc := range bot.Exchanges {
@@ -611,6 +642,16 @@ func (bot *ExchangeBot) Start(ctx context.Context, wg *sync.WaitGroup) {
 				}
 			}(xc, idx)
 			idx++
+		}
+
+		for _, xc := range bot.DCRBTCExchanges {
+			go func(xc Exchange, d int) {
+				xc.Refresh()
+				if !xc.IsFailed() {
+					xc.Hurry(timeBetween * time.Duration(d))
+				}
+			}(xc, dcrbtcidx)
+			dcrbtcidx++
 		}
 
 		for _, xc := range bot.LTCExchanges {
@@ -698,10 +739,11 @@ func (bot *ExchangeBot) connectMasterBot(ctx context.Context, delay time.Duratio
 	bot.masterConnection = conn
 	grpcClient := dcrrates.NewDCRRatesClient(conn)
 	stream, err := grpcClient.SubscribeExchanges(ctx, &dcrrates.ExchangeSubscription{
-		BtcIndex:     bot.BtcIndex,
-		Exchanges:    bot.subscribedExchanges(),
-		LTCExchanges: bot.subscribedMutilchainExchanges(TYPELTC),
-		BTCExchanges: bot.subscribedMutilchainExchanges(TYPEBTC),
+		BtcIndex:        bot.BtcIndex,
+		Exchanges:       bot.subscribedExchanges(),
+		Dcrbtcexchanges: bot.subscribedDCRBTCExchanges(),
+		Ltcexchanges:    bot.subscribedMutilchainExchanges(TYPELTC),
+		Btcexchanges:    bot.subscribedMutilchainExchanges(TYPEBTC),
 	})
 	if err != nil {
 		return nil, err
@@ -734,6 +776,14 @@ func (bot *ExchangeBot) subscribedMutilchainExchanges(chainType string) []string
 func (bot *ExchangeBot) subscribedExchanges() []string {
 	xcList := make([]string, 0, len(bot.Exchanges))
 	for token := range bot.Exchanges {
+		xcList = append(xcList, token)
+	}
+	return xcList
+}
+
+func (bot *ExchangeBot) subscribedDCRBTCExchanges() []string {
+	xcList := make([]string, 0, len(bot.DCRBTCExchanges))
+	for token := range bot.DCRBTCExchanges {
 		xcList = append(xcList, token)
 	}
 	return xcList
@@ -804,6 +854,7 @@ func (bot *ExchangeBot) ConvertedState(code string) (*ExchangeBotState, error) {
 	}
 
 	dcrPrice, volume := bot.processState(bot.currentState.DcrBtc, true)
+	dcrBtcPrice, dcrBtcVolume := bot.processState(bot.currentState.DcrUsd, true)
 	ltcPrice, ltcVolumn := bot.processState(bot.currentState.LtcUsd, true)
 	btcExchangePrice, btcVolumn := bot.processState(bot.currentState.BtcUsd, true)
 	btcPrice, _ := bot.processState(fiatIndices, false)
@@ -812,18 +863,21 @@ func (bot *ExchangeBot) ConvertedState(code string) (*ExchangeBotState, error) {
 		return nil, fmt.Errorf("Unable to process price for currency %s", code)
 	}
 	state := ExchangeBotState{
-		BtcIndex:    code,
-		Volume:      volume * btcPrice,
-		Price:       dcrPrice,
-		LTCPrice:    ltcPrice,
-		LTCVolume:   ltcVolumn * ltcPrice,
-		BTCPrice:    btcExchangePrice,
-		BTCVolume:   btcVolumn * btcExchangePrice,
-		BtcPrice:    btcPrice,
-		DcrBtc:      bot.currentState.DcrBtc,
-		LtcUsd:      bot.currentState.LtcUsd,
-		BtcUsd:      bot.currentState.BtcUsd,
-		FiatIndices: fiatIndices,
+		BtcIndex:     code,
+		Volume:       volume * btcPrice,
+		Price:        dcrPrice,
+		DcrBtcPrice:  dcrBtcPrice,
+		DCRBTCVolume: dcrBtcVolume,
+		LTCPrice:     ltcPrice,
+		LTCVolume:    ltcVolumn * ltcPrice,
+		BTCPrice:     btcExchangePrice,
+		BTCVolume:    btcVolumn * btcExchangePrice,
+		BtcPrice:     btcPrice,
+		DcrBtc:       bot.currentState.DcrBtc,
+		DcrUsd:       bot.currentState.DcrUsd,
+		LtcUsd:       bot.currentState.LtcUsd,
+		BtcUsd:       bot.currentState.BtcUsd,
+		FiatIndices:  fiatIndices,
 	}
 
 	return state.copy(), nil
@@ -831,10 +885,11 @@ func (bot *ExchangeBot) ConvertedState(code string) (*ExchangeBotState, error) {
 
 // ExchangeRates is the dcr and btc prices converted to fiat.
 type ExchangeRates struct {
-	BtcIndex  string               `json:"btcIndex"`
-	DcrPrice  float64              `json:"dcrPrice"`
-	BtcPrice  float64              `json:"btcPrice"`
-	Exchanges map[string]BaseState `json:"exchanges"`
+	BtcIndex    string               `json:"btcIndex"`
+	DcrBtcPrice float64              `json:"dcrBtcPrice"`
+	DcrPrice    float64              `json:"dcrPrice"`
+	BtcPrice    float64              `json:"btcPrice"`
+	Exchanges   map[string]BaseState `json:"exchanges"`
 }
 
 // Rates is the current exchange rates for dcr and btc.
@@ -871,15 +926,17 @@ func (bot *ExchangeBot) ConvertedRates(code string) (*ExchangeRates, error) {
 	}
 
 	dcrPrice, _ := bot.processState(bot.currentState.DcrBtc, true)
+	dcrBtcPrice, _ := bot.processState(bot.currentState.DcrUsd, true)
 	btcPrice, _ := bot.processState(fiatIndices, false)
 	if dcrPrice == 0 || btcPrice == 0 {
 		bot.failed = true
 		return nil, fmt.Errorf("Unable to process price for currency %s", code)
 	}
 	return &ExchangeRates{
-		BtcIndex: code,
-		DcrPrice: dcrPrice,
-		BtcPrice: btcPrice,
+		BtcIndex:    code,
+		DcrPrice:    dcrPrice,
+		BtcPrice:    btcPrice,
+		DcrBtcPrice: dcrBtcPrice,
 	}, nil
 }
 
@@ -1032,6 +1089,9 @@ func (bot *ExchangeBot) updateExchange(update *ExchangeUpdate) error {
 	case BTCSYMBOL:
 		bot.currentState.BtcUsd[update.Token] = update.State
 		chainType = TYPEBTC
+	case DCRBTCSYMBOL:
+		bot.currentState.DcrUsd[update.Token] = update.State
+		chainType = TYPEDCR
 	default:
 		bot.currentState.DcrBtc[update.Token] = update.State
 		chainType = TYPEDCR
@@ -1081,6 +1141,7 @@ func (bot *ExchangeBot) updateMutilchainState(chainType string) error {
 		}
 	default:
 		dcrPrice, volume := bot.processState(bot.currentState.DcrBtc, true)
+		dcrBtcPrice, dcrBtcvolume := bot.processState(bot.currentState.DcrUsd, true)
 		btcPrice, _ := bot.processState(bot.currentState.FiatIndices, false)
 		if dcrPrice == 0 || btcPrice == 0 {
 			bot.failed = true
@@ -1089,6 +1150,8 @@ func (bot *ExchangeBot) updateMutilchainState(chainType string) error {
 			bot.currentState.Price = dcrPrice
 			bot.currentState.BtcPrice = btcPrice
 			bot.currentState.Volume = volume
+			bot.currentState.DcrBtcPrice = dcrBtcPrice
+			bot.currentState.DCRBTCVolume = dcrBtcvolume
 		}
 	}
 
@@ -1171,6 +1234,11 @@ func (bot *ExchangeBot) nextTick() *time.Timer {
 func (bot *ExchangeBot) Cycle() {
 	tNow := time.Now()
 	for _, xc := range bot.Exchanges {
+		if tNow.Sub(xc.LastTry()) > bot.DataExpiry {
+			go xc.Refresh()
+		}
+	}
+	for _, xc := range bot.DCRBTCExchanges {
 		if tNow.Sub(xc.LastTry()) > bot.DataExpiry {
 			go xc.Refresh()
 		}
@@ -1535,7 +1603,11 @@ func (bot *ExchangeBot) QuickDepth(token string) (chart []byte, err error) {
 	} else {
 		bot.mtx.Lock()
 		defer bot.mtx.Unlock()
-		xcState, found := bot.currentState.DcrBtc[token]
+		var xcState *ExchangeState
+		var found bool
+		// _, foun0 := bot.currentState.DcrUsd[token]
+		// fmt.Println("check dcrusd token: ", foun0)
+		xcState, found = bot.currentState.DcrUsd[token]
 		if !found {
 			return nil, fmt.Errorf("Failed to find DCR exchange state for %s", token)
 		}

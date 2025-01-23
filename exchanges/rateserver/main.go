@@ -145,7 +145,7 @@ func main() {
 				printUpdate(update.Token, update.State.Symbol)
 				sendUpdate(makeExchangeRateUpdate(update))
 			case update := <-xcSignals.Index:
-				printUpdate(update.Token, exchanges.DCRSYMBOL)
+				printUpdate(update.Token, exchanges.DCRUSDSYMBOL)
 				sendUpdate(&dcrrates.ExchangeRateUpdate{
 					Token:   update.Token,
 					Indices: update.Indices,

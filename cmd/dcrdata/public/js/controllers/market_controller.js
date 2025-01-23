@@ -32,12 +32,19 @@ const prettyDurations = {
   '1mo': 'month'
 }
 const exchangeLinks = {
-  binance: 'https://www.binance.com/en/trade/DCR_BTC',
+  binance: 'https://www.binance.com/en/trade/DCR_USDT',
+  btc_binance: 'https://www.binance.com/en/trade/DCR_BTC',
   bittrex: 'https://bittrex.com/Market/Index?MarketName=BTC-DCR',
   poloniex: 'https://poloniex.com/exchange#btc_dcr',
   dragonex: 'https://dragonex.io/en-us/trade/index/dcr_btc',
   huobi: 'https://www.hbg.com/en-us/exchange/?s=dcr_btc',
   dcrdex: 'https://dex.decred.org'
+}
+
+const btcPairUses = ['btc_binance', 'dcrdex', 'aggregated']
+
+function useBTCPair (exchange) {
+  return btcPairUses.indexOf(exchange) > -1
 }
 
 const printNames = {
@@ -566,13 +573,13 @@ export default class extends Controller {
     return ['chartSelect', 'exchanges', 'bin', 'chart', 'legend', 'conversion',
       'xcName', 'xcLogo', 'actions', 'sticksOnly', 'depthOnly', 'chartLoader',
       'xcRow', 'xcIndex', 'price', 'age', 'ageSpan', 'link', 'aggOption',
-      'aggStack', 'zoom']
+      'aggStack', 'zoom', 'pairSelect', 'exchangeBtnArea']
   }
 
   async connect () {
     this.isHomepage = !window.location.href.includes('/market')
     this.query = new TurboQuery()
-    settings = TurboQuery.nullTemplate(['chart', 'xc', 'bin', 'xcs'])
+    settings = TurboQuery.nullTemplate(['chart', 'xc', 'bin', 'xcs', 'pair'])
     this.exchangesButtons = this.exchangesTarget.querySelectorAll('button')
     const _this = this
     if (!this.isHomepage) {
@@ -739,6 +746,7 @@ export default class extends Controller {
     const xc = settings.xc
     const chart = settings.chart
     const oldZoom = this.graph.xAxisRange()
+    // const pairQuery = `${settings.pair === 'btc' ? 'btc' : 'usdt'}`
     if (usesCandlesticks(chart)) {
       if (settings.chart !== 'history' && settings.chart !== 'volume') {
         if (!(xc in availableCandlesticks)) {
@@ -1376,6 +1384,41 @@ export default class extends Controller {
     this.fetchChart()
   }
 
+  changePair (e) {
+    const target = e.target || e.srcElement
+    settings.pair = target.value
+    const isBtcPair = settings.pair === 'btc'
+    this.exchangesButtons.forEach(button => {
+      if (!isBtcPair || useBTCPair(button.name)) {
+        button.classList.remove('d-hide')
+      } else {
+        button.classList.add('d-hide')
+      }
+    })
+    const isBTCPair = settings.pair === 'btc'
+    const activeExchange = this.getSelectedExchanges()
+    const afterActiveExchange = []
+    const _this = this
+    if (settings.chart === 'history' || settings.chart === 'volume') {
+      activeExchange.forEach((activeEx) => {
+        if (!isBTCPair || useBTCPair(activeEx)) {
+          afterActiveExchange.push(activeEx)
+        }
+      })
+      if (afterActiveExchange.length > 0) {
+        settings.xcs = afterActiveExchange.join(',')
+      }
+    } else {
+      afterActiveExchange.push(!isBTCPair || useBTCPair(activeExchange[0]) ? activeExchange[0] : _this.exchangesButtons[0].name)
+      if (afterActiveExchange.length > 0) {
+        settings.xc = afterActiveExchange.join(',')
+      }
+    }
+    this.setButtons()
+    this.setExchangeName()
+    this.fetchChart()
+  }
+
   changeExchange (e) {
     const btn = e.target || e.srcElement
     if (btn.nodeName !== 'BUTTON' || !this.graph) return
@@ -1532,6 +1575,16 @@ export default class extends Controller {
       }
     }
     return null
+  }
+
+  getSelectedExchanges () {
+    const activeExchanges = []
+    this.exchangesButtons.forEach(button => {
+      if (button.classList.contains('active')) {
+        activeExchanges.push(button.name)
+      }
+    })
+    return activeExchanges
   }
 
   setStacking (e) {
